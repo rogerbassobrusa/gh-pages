@@ -1,0 +1,174 @@
+---
+title: "Predicting barbell lifts execution quality"
+author: "Roger Basso Brusa"
+date: "12 May 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+## Summary
+
+The purpose of this machine learning project is to predict the execution quality of barbell lifts using a provided dataset. After providing a background for the data collection, some exploratory data analysis will be executed. Then the data will be cleansed and its dimensions reduced. Cross validation will be applied and a random forest caret package method will be used to create a model to predict the target variable. In and out of sample errors will be compared and, finally, the model will be applied to a test set of 20 cases, validated through an online questionnaire.
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data for the exercise can be downloaded from the website http://groupware.les.inf.puc-rio.br/har (Weight Lifting Exercise Dataset), where extra information can be found.
+
+## Exploratory data analysis
+
+```{r echo=FALSE, message=FALSE}
+setwd("D:/OneDrive/DataScience/Training/Data Science Specialization/Course8-PracticalMachineLearning/wk4/Assignment")
+library(caret)
+library(ggplot2)
+set.seed(101)
+```
+
+The data is loaded with the stringsAsFactors parameter set to false to prevent R from converting some numeric field into factors.
+
+```{r echo=TRUE, message=FALSE}
+training <- read.csv('pml-training.csv', header = T, stringsAsFactors = F)
+testing <- read.csv('pml-testing.csv', header = T, stringsAsFactors = F)
+```
+
+The training dataset is quite large, consisting of almost 20 thousand observations of 160 variables. The testing dataset contains 20 observations and will be used to test the model using the online questionnaire. The high number of columns will require the adoption of a dimension reduction strategy in order to improve the training performance.
+
+```{r echo=TRUE, message=FALSE}
+dim(training)
+dim(testing)
+```
+
+The structure of the training data seems to reveal that not all the fields carry useful information for the purpose of the prediction.
+
+```{r echo=TRUE, message=FALSE}
+str(training)
+```
+
+This assumption is confirmed by the following barplot, where for each column on the X axis the number of non NA or empty values has been reported on the Y axis. In particular, the X field is just a counter, some date time stamp fields can be ignored, some columns contain a majority of empty or NA values. These columns will be safely removed in the next stage.
+
+```{r echo=TRUE, message=FALSE}
+dataG2 <- apply(training, 2, function(x) length(which(!is.na(x) & !(x == ""))))
+dataG2b <- data.frame(names = names(training), count = dataG2)
+g2 <- ggplot(dataG2b, aes(x = dataG2b$names, y = dataG2b$count)) 
+g2 <- g2 + geom_bar(stat = "identity", fill = "red") 
+g2 <- g2 + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
+g2 <- g2 + xlab("columns") 
+g2 <- g2 + ylab("Number of relevant observations") 
+g2 <- g2 + ggtitle("Non NA or empty values by column")
+g2
+```
+
+The 2 datasets (training and testing) have the same number of columns, but their last field is different, as it can be seen below. This will need to be taken into account during the next stages.
+
+```{r echo=TRUE, message=FALSE}
+tail(names(training))
+tail(names(testing))
+```
+
+The purpose of this project is to train a model to predict the 'classe' variable, where classe A corresponds to the barbell lifts correctly executed and the other classes otherwise. The bar plot below shows the distribution of the 'classe' variable in the training dataset.
+
+```{r echo=TRUE, message=FALSE}
+g1 <- ggplot(training, aes(x = training$classe))
+g1 <- g1 + geom_bar(fill = "red") 
+g1 <- g1 + xlab("classe") 
+g1 <- g1 + ggtitle("Counts of the variable 'classe'")
+g1
+```
+
+## Data cleansing
+
+In order to apply the same transformations to both the training and testing datasets, the 2 datasets will be merged together and the transformations will be applied to the merged dataset. Then, before training a model, the 2 datasets will be separated.
+Firstly, the 2 datasets must have the same data structure (columns), then they are merged together.
+
+```{r echo=TRUE, message=FALSE}
+testing$classe <- NA
+training$problem_id <- NA
+training <- rbind(training, testing)
+dim(training)
+```
+
+Now the training dataset contains 19642 observations. At this point all the redundant columns can be removed, leaving only the most meaningful variables. Now the training dataset has 53 features and a label.
+
+```{r echo=TRUE, message=FALSE}
+training <- training[, !apply (is.na(training[1,]), 2, all)]
+training <- training[ , -which(names(training) %in% c("X","user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp"))]
+training <- training[ , -which(names(training) %in% c("kurtosis_yaw_belt","skewness_yaw_belt", "kurtosis_yaw_dumbbell", "skewness_yaw_dumbbell", "kurtosis_yaw_forearm", "skewness_yaw_forearm", "amplitude_yaw_forearm", "amplitude_yaw_dumbbell", "amplitude_yaw_belt"))]
+training <- training[ , -which(names(training) %in% c("new_window"))]
+training <- training[ , -which(names(training) %in% c("kurtosis_roll_belt", "kurtosis_picth_belt", "skewness_roll_belt", "skewness_roll_belt.1", "kurtosis_roll_arm", "kurtosis_picth_arm", "kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm", "kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "skewness_roll_dumbbell", "skewness_pitch_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "skewness_roll_forearm", "skewness_pitch_forearm", "max_yaw_forearm", "min_yaw_forearm"))]
+training <- training[ , -which(names(training) %in% c("max_yaw_belt", "min_yaw_belt"))]
+str(training)
+```
+
+## Dimension reduction
+
+To achieve a further reduction on the number of features, a principal component analysis method is applied to the training data. The PCA created 26 features to maintain 95% of the variability of the original data. Now the data is a 19642 x 27 dataset.
+
+```{r echo=TRUE, message=FALSE}
+preproc <- preProcess(training[,-54], method = "pca")
+trainingPC <- predict(preproc, training[,-54])
+trainingPC <- cbind(classe = training$classe, trainingPC)
+preproc
+dim(trainingPC)
+```
+
+Let's not forget that the last 20 rows of the training dataset are the original testing dataset. Now those 20 rows are split from the main training data.
+
+```{r echo=TRUE, message=FALSE}
+testingPC <- trainingPC[19623:19642,]
+trainingPC <- trainingPC[1:19622,]
+```
+
+## Cross validation
+
+There are multiple cross validation options available. In this case it has been decided to split the main training data into 2 datasets: 90% of the original data will become the final training data and the remaining 10% will be used to test the resulting model.
+
+```{r echo=TRUE, message=FALSE}
+inTrain <- createDataPartition(y = trainingPC$classe, p = 0.9, list = FALSE)
+training0 <- trainingPC[inTrain,]
+testing0 <- trainingPC[-inTrain,]
+dim(training0)
+dim(testing0)
+
+##training0 <- trainingPC[ sample(1:nrow(trainingPC), size=500, replace=FALSE), ]
+##testing0 <- trainingPC[ sample(1:nrow(trainingPC), size=50, replace=FALSE), ]
+```
+
+## Training a model
+
+The first model to be tested is a Random Forest. It turns out that the accuracy achieved with this model is good enough that it has been decided it is not necessary either trying other models or reiterating the training on other splits of the data.
+
+```{r echo=TRUE, cache=TRUE, message=FALSE}
+fit0 <- train(classe ~ ., data = training0, method = "rf")
+fit0
+```
+
+## In sample error vs out of sample error
+
+The 'in sample error' can be calculated using a portion of the training data to test the accuracy of the model. The accuracy of the model in this case is expected to be high, as the test data is part of the train data (it is in fact 100%).
+
+```{r echo=TRUE, message=FALSE}
+testingIN <- training0[ sample(1:nrow(training0), size=50, replace=FALSE), ]
+resultIN <- predict(fit0, newdata = testingIN)
+resultIN <- as.data.frame(resultIN)
+resultIN$classe <- testingIN$classe
+confusionMatrix(resultIN$resultIN, resultIN$classe)
+```
+
+The 'out of sample error' instead is calculated using the testing dataset that was created at cross validation stage. The accuracy is expected to be lower than that seen in the 'in sample error' case, but it is still very high (almost 100%).
+
+```{r echo=TRUE, message=FALSE}
+result0 <- predict(fit0, newdata = testing0)
+result0 <- as.data.frame(result0)
+result0$classe <- testing0$classe
+confusionMatrix(result0$result0, result0$classe)
+```
+
+Finally the model is applied to the original testing data. The results of this operation have been tested answering the questionnaire online with outcome in line with the above accuracy.
+
+```{r echo=TRUE, message=FALSE}
+result1 <- predict(fit0, newdata = testingPC)
+result1 <- as.data.frame(result1)
+print(result1)
+```
